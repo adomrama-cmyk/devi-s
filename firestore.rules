@@ -1,0 +1,158 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // ===============================================================
+    // Assumed Data Model
+    // ===============================================================
+    //
+    // Collection: users
+    // Fields: uid, email, displayName, photoURL, role, preferences, createdAt
+    //
+    // Collection: products
+    // Fields: id, name, description, price, stock, category, images, sellerId, sellerName, avgRating, reviewCount, createdAt
+    //
+    // Collection: orders
+    // Fields: id, userId, items, total, status, shippingAddress, paymentMethod, createdAt
+    //
+    // Collection: reviews
+    // Fields: id, productId, userId, userName, rating, comment, createdAt
+    //
+    // Collection: notifications
+    // Fields: id, userId, message, type, read, createdAt
+    //
+    // Collection: settings
+    // Document: hero
+    // Fields: title, subtitle, ctaText, imageUrl, updatedAt
+    //
+    // ===============================================================
+
+    // ===============================================================
+    // Helper Functions
+    // ===============================================================
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    function isAdmin() {
+      return isAuthenticated() &&
+        (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin' ||
+         (request.auth.token.email == "adom.rama@gmail.com" && request.auth.token.email_verified == true) ||
+         (request.auth.token.email == "admin1@devis.market" && request.auth.token.email_verified == true));
+    }
+
+    function hasRequiredFields(fields) {
+      return request.resource.data.keys().hasAll(fields);
+    }
+
+    function hasOnlyAllowedFields(fields) {
+      return request.resource.data.keys().hasOnly(fields);
+    }
+
+    function isValidEmail(email) {
+      return email is string && email.matches("^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$");
+    }
+
+    // ===============================================================
+    // Domain Validators
+    // ===============================================================
+
+    function isValidUser(data) {
+      return hasRequiredFields(['uid', 'email', 'role']) &&
+             data.uid == request.auth.uid &&
+             isValidEmail(data.email) &&
+             data.role in ['admin', 'seller', 'user'];
+    }
+
+    function isValidProduct(data) {
+      return hasRequiredFields(['name', 'price', 'stock', 'sellerId']) &&
+             data.name is string && data.name.size() > 0 && data.name.size() < 200 &&
+             data.price is number && data.price >= 0 &&
+             data.stock is int && data.stock >= 0 &&
+             data.sellerId is string;
+    }
+
+    function isValidOrder(data) {
+      return hasRequiredFields(['userId', 'items', 'total', 'status']) &&
+             data.userId is string &&
+             data.items is list &&
+             data.total is number && data.total >= 0 &&
+             data.status in ['pending', 'processing', 'shipped', 'delivered', 'cancelled'];
+    }
+
+    function isValidReview(data) {
+      return hasRequiredFields(['productId', 'userId', 'rating']) &&
+             data.productId is string &&
+             data.userId == request.auth.uid &&
+             data.rating is int && data.rating >= 1 && data.rating <= 5;
+    }
+
+    function isValidNotification(data) {
+      return hasRequiredFields(['userId', 'message', 'read']) &&
+             data.userId is string &&
+             data.message is string &&
+             data.read is bool;
+    }
+
+    function isValidHeroContent(data) {
+      return hasRequiredFields(['title', 'subtitle', 'ctaText', 'imageUrl']) &&
+             data.title is string && data.title.size() > 0 &&
+             data.subtitle is string &&
+             data.ctaText is string &&
+             data.imageUrl is string;
+    }
+
+    // ===============================================================
+    // Rules
+    // ===============================================================
+
+    match /users/{userId} {
+      allow read: if isOwner(userId) || isAdmin();
+      allow create: if isOwner(userId) && isValidUser(request.resource.data) && (request.resource.data.role == 'user' || isAdmin());
+      allow update: if isOwner(userId) && isValidUser(request.resource.data) && (request.resource.data.role == resource.data.role || (resource.data.role == 'user' && request.resource.data.role == 'seller') || isAdmin());
+    }
+
+    match /products/{productId} {
+      allow read: if true;
+      allow create: if isAuthenticated() && (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role in ['seller', 'admin']) && isValidProduct(request.resource.data);
+      allow update: if isAuthenticated() && (request.auth.uid == resource.data.sellerId || isAdmin()) && isValidProduct(request.resource.data);
+      allow delete: if isAdmin() || (isAuthenticated() && request.auth.uid == resource.data.sellerId);
+    }
+
+    match /orders/{orderId} {
+      allow read: if isAuthenticated() && (request.auth.uid == resource.data.userId || isAdmin());
+      allow create: if isAuthenticated() && isValidOrder(request.resource.data) && request.resource.data.userId == request.auth.uid;
+      allow update: if (isAdmin() && isValidOrder(request.resource.data)) || 
+                     (isAuthenticated() && request.auth.uid == resource.data.userId && 
+                      isValidOrder(request.resource.data) && 
+                      request.resource.data.status == resource.data.status &&
+                      request.resource.data.userId == resource.data.userId);
+      allow delete: if isAdmin();
+    }
+
+    match /reviews/{reviewId} {
+      allow read: if true;
+      allow create: if isAuthenticated() && isValidReview(request.resource.data);
+      allow update, delete: if isAuthenticated() && (request.auth.uid == resource.data.userId || isAdmin());
+    }
+
+    match /notifications/{notificationId} {
+      allow read: if isAuthenticated() && (request.auth.uid == resource.data.userId || isAdmin());
+      allow create: if isAdmin() || isAuthenticated(); // Allow system or other users (e.g. for seller notifications)
+      allow update: if isAuthenticated() && request.auth.uid == resource.data.userId && hasOnlyAllowedFields(resource.data.keys().concat(['read'])) && request.resource.data.read is bool;
+      allow delete: if isAuthenticated() && request.auth.uid == resource.data.userId;
+    }
+
+    match /settings/hero {
+      allow read: if true;
+      allow write: if isAdmin() && isValidHeroContent(request.resource.data);
+    }
+
+    match /{path=**} {
+      allow read, write: if false;
+    }
+  }
+}
