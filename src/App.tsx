@@ -21,7 +21,7 @@ import {
   ChevronRight, Home, CreditCard, MapPin, CheckCircle2, Clock,
   Store, Plus, Trash2, Edit, Book, Smartphone, Shirt, Utensils,
   Heart, Gamepad, Car, Dumbbell, HelpCircle, Truck, RefreshCw, Info, Briefcase, BookOpen, ShieldCheck,
-  LogIn, UserPlus, Shield
+  LogIn, UserPlus, Shield, UserCheck
 } from 'lucide-react';
 import { Button, buttonVariants } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
@@ -72,6 +72,7 @@ export default function App() {
   const [isLoginDialogOpen, setIsLoginDialogOpen] = useState(false);
   const [adminLoginForm, setAdminLoginForm] = useState({ username: '', password: '' });
   const [isLoggingIn, setIsLoggingIn] = useState(false);
+  const [isRegistrationModalOpen, setIsRegistrationModalOpen] = useState(false);
 
   const handleLogin = () => {
     setIsLoginDialogOpen(true);
@@ -95,7 +96,6 @@ export default function App() {
 
     setIsLoggingIn(true);
     try {
-      // Map username to email for standard Firebase Auth
       const email = adminLoginForm.username === 'admin1' 
         ? 'admin1@devis.market' 
         : `${adminLoginForm.username}@devis.market`;
@@ -103,8 +103,11 @@ export default function App() {
       try {
         await signInWithEmailAndPassword(auth, email, adminLoginForm.password);
       } catch (err: any) {
-        // If user not found, and it's the specific admin1 account, try to create it
-        if (err.code === 'auth/user-not-found' && adminLoginForm.username === 'admin1' && adminLoginForm.password === 'admin123') {
+        // Modern Firebase projects have enumeration protection, so they might return invalid-credential instead of user-not-found
+        const isUserNotFound = err.code === 'auth/user-not-found' || err.code === 'auth/invalid-credential';
+        
+        if (isUserNotFound && adminLoginForm.username === 'admin1' && adminLoginForm.password === 'admin123') {
+           // Attempt to create the specific admin account if it fails login (likely doesn't exist yet)
            await createUserWithEmailAndPassword(auth, email, adminLoginForm.password);
         } else {
           throw err;
@@ -115,15 +118,23 @@ export default function App() {
       setAdminLoginForm({ username: '', password: '' });
       toast.success('Berhasil masuk sebagai Admin');
     } catch (error: any) {
-      console.error(error);
+      console.error('Login Error:', error.code, error.message);
       if (error.code === 'auth/wrong-password') {
         toast.error('Password salah');
       } else if (error.code === 'auth/user-not-found' || error.code === 'auth/invalid-credential') {
-        toast.error('Kredensial tidak valid');
+        // Provide more guidance if it's the admin1 account
+        if (adminLoginForm.username === 'admin1') {
+          toast.error('Gagal masuk sebagai admin1. Pastikan "Email/Password" sudah aktif di Firebase Console.');
+        } else {
+          toast.error('Username atau password tidak valid');
+        }
       } else if (error.code === 'auth/operation-not-allowed') {
-        toast.error('Login email/password belum diaktifkan di Firebase Console.');
+        toast.error('Fitur login email/password belum diaktifkan di Firebase Console.');
+      } else if (error.code === 'auth/email-already-in-use') {
+        // This happens if the user exists but the password was wrong in the first inner try
+        toast.error('Username sudah terdaftar, namun password salah.');
       } else {
-        toast.error('Login gagal: ' + error.message);
+        toast.error('Terjadi kesalahan: ' + error.code);
       }
     } finally {
       setIsLoggingIn(false);
@@ -782,8 +793,12 @@ export default function App() {
                   <TabsList className="grid w-full grid-cols-4 mb-8 bg-card border border-border p-1 rounded-sm">
                     <TabsTrigger value="orders" className="data-[state=active]:bg-primary data-[state=active]:text-primary-foreground rounded-sm text-[10px] uppercase tracking-widest font-bold">Pesanan Saya</TabsTrigger>
                     <TabsTrigger value="settings" className="data-[state=active]:bg-primary data-[state=active]:text-primary-foreground rounded-sm text-[10px] uppercase tracking-widest font-bold">Pengaturan</TabsTrigger>
-                    {(user.role === 'seller' || user.role === 'admin') && <TabsTrigger value="seller" className="data-[state=active]:bg-primary data-[state=active]:text-primary-foreground rounded-sm text-[10px] uppercase tracking-widest font-bold">Toko Saya</TabsTrigger>}
-                    {user.role === 'admin' && <TabsTrigger value="admin" className="data-[state=active]:bg-primary data-[state=active]:text-primary-foreground rounded-sm text-[10px] uppercase tracking-widest font-bold">Admin Panel</TabsTrigger>}
+                    {(user.role === 'seller' || user.role === 'admin') && (
+                      <TabsTrigger value="seller" className="data-[state=active]:bg-primary data-[state=active]:text-primary-foreground rounded-sm text-[10px] uppercase tracking-widest font-bold">Toko Saya</TabsTrigger>
+                    )}
+                    {user.role === 'admin' && (
+                      <TabsTrigger value="admin" className="data-[state=active]:bg-primary data-[state=active]:text-primary-foreground rounded-sm text-[10px] uppercase tracking-widest font-bold">Admin Panel</TabsTrigger>
+                    )}
                   </TabsList>
                   
                     <TabsContent value="orders" className="space-y-4">
@@ -880,7 +895,20 @@ export default function App() {
                         </div>
                         <div className="pt-4 border-t border-border mt-4">
                           <h4 className="text-sm font-bold mb-2">Status Akun</h4>
-                          {user.role === 'user' ? (
+                          {user.role === 'admin' ? (
+                            <div className="bg-primary/5 border border-primary/20 p-4 rounded-lg flex items-center gap-3">
+                              <ShieldCheck className="w-5 h-5 text-primary" />
+                              <span className="text-xs font-bold uppercase tracking-widest">Administrator Platform</span>
+                            </div>
+                          ) : user.role === 'seller' ? (
+                            <div className="bg-primary/5 border border-primary/20 p-4 rounded-lg">
+                              <div className="flex items-center gap-2 text-primary mb-2">
+                                <Store className="w-5 h-5" />
+                                <span className="font-bold uppercase tracking-widest text-xs">Penjual Devi's Market</span>
+                              </div>
+                              <p className="text-[10px] text-secondary-foreground">Akun Anda sudah terdaftar sebagai penjual. Anda bisa berbelanja sekaligus mengelola toko Anda di tab 'Toko Saya'.</p>
+                            </div>
+                          ) : (
                             <div className="bg-primary/5 border border-primary/20 p-4 rounded-lg">
                               <p className="text-sm text-secondary-foreground mb-4">Ingin mulai berjualan produk Anda sendiri di Devi's Market?</p>
                               <Button 
@@ -888,17 +916,12 @@ export default function App() {
                                 disabled={isUpdating}
                                 onClick={(e) => {
                                   e.preventDefault();
-                                  becomeSeller();
+                                  setIsRegistrationModalOpen(true);
                                 }} 
                                 className="bg-primary text-primary-foreground rounded-sm uppercase tracking-widest text-xs font-bold"
                               >
-                                <Store className="w-4 h-4 mr-2" /> {isUpdating ? 'Memproses...' : 'Buka Toko Sekarang'}
+                                <Store className="w-4 h-4 mr-2" /> Buka Toko Sekarang
                               </Button>
-                            </div>
-                          ) : (
-                            <div className="flex items-center gap-2 text-primary">
-                              <Store className="w-5 h-5" />
-                              <span className="font-bold uppercase tracking-widest text-xs">Akun Penjual Aktif ({user.role})</span>
                             </div>
                           )}
                         </div>
@@ -1096,6 +1119,39 @@ export default function App() {
           </DialogContent>
         </Dialog>
 
+        <Dialog open={isRegistrationModalOpen} onOpenChange={setIsRegistrationModalOpen}>
+          <DialogContent className="max-w-md bg-card border-border">
+            <DialogHeader>
+              <DialogTitle className="font-heading text-center text-xl">Registrasi Penjual</DialogTitle>
+              <CardDescription className="text-center">Daftarkan akun Anda untuk mulai berjualan di Devi's Market</CardDescription>
+            </DialogHeader>
+            <div className="space-y-6 py-6 text-center">
+              <div className="w-20 h-20 bg-primary/10 rounded-full flex items-center justify-center mx-auto mb-4">
+                <Store className="w-10 h-10 text-primary" />
+              </div>
+              <div className="space-y-2">
+                <h3 className="font-bold">Keuntungan Menjadi Penjual:</h3>
+                <ul className="text-sm text-secondary-foreground space-y-1 text-left inline-block">
+                  <li>✓ Kelola stok produk Anda sendiri</li>
+                  <li>✓ Jangkau pembeli di seluruh platform</li>
+                  <li>✓ Dashboard penjualan real-time</li>
+                  <li>✓ Pembayaran terjamin dan aman</li>
+                </ul>
+              </div>
+              <p className="text-xs text-secondary-foreground italic">Dengan menekan tombol di bawah, Anda setuju dengan syarat dan ketentuan penjual kami.</p>
+              <Button 
+                onClick={() => {
+                  becomeSeller();
+                  setIsRegistrationModalOpen(false);
+                }}
+                className="w-full bg-primary text-primary-foreground font-bold uppercase tracking-widest text-xs py-6 rounded-sm"
+              >
+                Saya Setuju & Buka Toko
+              </Button>
+            </div>
+          </DialogContent>
+        </Dialog>
+
         {/* Footer */}
         <footer className="bg-card border-t border-border pt-16 pb-8 mt-20">
           <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
@@ -1213,6 +1269,14 @@ function ProductCard({ product, onAddToCart }: ProductCardProps) {
 function AdminDashboard({ products, orders }: { products: Product[], orders: Order[] }) {
   const [heroEdit, setHeroEdit] = useState<HeroContent | null>(null);
   const [isSavingHero, setIsSavingHero] = useState(false);
+  const [allUsers, setAllUsers] = useState<UserProfile[]>([]);
+
+  useEffect(() => {
+    const unsubscribe = onSnapshot(collection(db, 'users'), (snapshot) => {
+      setAllUsers(snapshot.docs.map(doc => doc.data() as UserProfile));
+    });
+    return () => unsubscribe();
+  }, []);
 
   useEffect(() => {
     const fetchHero = async () => {
@@ -1279,19 +1343,20 @@ function AdminDashboard({ products, orders }: { products: Product[], orders: Ord
   const stats = useMemo(() => {
     const totalRevenue = orders.filter(o => o.status !== 'cancelled').reduce((acc, o) => acc + o.total, 0);
     const lowStock = products.filter(p => p.stock < 10);
-    return { totalRevenue, lowStock };
-  }, [products, orders]);
+    const totalSellers = allUsers.filter(u => u.role === 'seller').length;
+    return { totalRevenue, lowStock, totalSellers };
+  }, [products, orders, allUsers]);
 
   return (
     <div className="space-y-8">
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
         <Card className="bg-primary text-black border-none shadow-lg">
           <CardHeader className="pb-2">
-            <CardTitle className="text-[10px] uppercase tracking-widest font-bold opacity-70">Total Pendapatan Platform</CardTitle>
+            <CardTitle className="text-[10px] uppercase tracking-widest font-bold opacity-70">Total Pendapatan</CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-heading font-bold">Rp {stats.totalRevenue.toLocaleString()}</div>
-            <p className="text-[10px] mt-1 opacity-60 uppercase tracking-tighter">Seluruh transaksi platform</p>
+            <div className="text-xl font-heading font-bold">Rp {stats.totalRevenue.toLocaleString()}</div>
+            <p className="text-[10px] mt-1 opacity-60 uppercase tracking-tighter">Seluruh transaksi</p>
           </CardContent>
         </Card>
         <Card className="bg-card border-border">
@@ -1299,8 +1364,17 @@ function AdminDashboard({ products, orders }: { products: Product[], orders: Ord
             <CardTitle className="text-[10px] uppercase tracking-widest font-bold text-secondary-foreground">Total Pesanan</CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-heading font-bold brand-text">{orders.length}</div>
-            <p className="text-[10px] mt-1 text-green-500 uppercase tracking-tighter">Pesanan masuk hari ini</p>
+            <div className="text-xl font-heading font-bold brand-text">{orders.length}</div>
+            <p className="text-[10px] mt-1 text-green-500 uppercase tracking-tighter">{orders.filter(o => o.status === 'pending').length} Baru</p>
+          </CardContent>
+        </Card>
+        <Card className="bg-card border-border">
+          <CardHeader className="pb-2">
+            <CardTitle className="text-[10px] uppercase tracking-widest font-bold text-secondary-foreground">Total Penjual</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="text-xl font-heading font-bold brand-text">{stats.totalSellers}</div>
+            <p className="text-[10px] mt-1 text-secondary-foreground uppercase tracking-tighter">Toko Aktif</p>
           </CardContent>
         </Card>
         <Card className={stats.lowStock.length > 0 ? 'border-red-900/50 bg-red-950/20' : 'bg-card border-border'}>
@@ -1308,11 +1382,11 @@ function AdminDashboard({ products, orders }: { products: Product[], orders: Ord
             <CardTitle className="text-[10px] uppercase tracking-widest font-bold text-secondary-foreground">Stok Menipis</CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-heading font-bold flex items-center gap-2 brand-text">
+            <div className="text-xl font-heading font-bold flex items-center gap-2 brand-text">
               {stats.lowStock.length}
               {stats.lowStock.length > 0 && <AlertTriangle className="w-5 h-5 text-red-500" />}
             </div>
-            <p className="text-[10px] mt-1 text-secondary-foreground uppercase tracking-tighter">Produk platform &lt; 10</p>
+            <p className="text-[10px] mt-1 text-secondary-foreground uppercase tracking-tighter">Item platform &lt; 10</p>
           </CardContent>
         </Card>
       </div>
@@ -1426,6 +1500,40 @@ function AdminDashboard({ products, orders }: { products: Product[], orders: Ord
                 </div>
               ))}
             </div>
+          </CardContent>
+        </Card>
+        <Card className="lg:col-span-2">
+          <CardHeader className="flex flex-row items-center justify-between">
+            <div>
+              <CardTitle>Daftar Penjual</CardTitle>
+              <CardDescription>Manajemen semua mitra penjual platform</CardDescription>
+            </div>
+            <Badge variant="outline">{stats.totalSellers} Penjual</Badge>
+          </CardHeader>
+          <CardContent>
+            <ScrollArea className="h-[300px]">
+              <div className="space-y-4">
+                {allUsers.filter(u => u.role === 'seller').map(seller => (
+                  <div key={seller.uid} className="flex items-center gap-4 p-3 bg-card border border-border rounded-lg">
+                    <Avatar className="h-10 w-10">
+                      <AvatarImage src={seller.photoURL} />
+                      <AvatarFallback>{seller.displayName[0]}</AvatarFallback>
+                    </Avatar>
+                    <div className="flex-1">
+                      <p className="font-bold text-sm">{seller.displayName}</p>
+                      <p className="text-[10px] text-secondary-foreground opacity-70">{seller.email}</p>
+                    </div>
+                    <div className="text-right">
+                      <p className="text-[10px] uppercase tracking-widest font-bold text-primary">Status: AKTIF</p>
+                      <p className="text-[9px] text-secondary-foreground">Terdaftar {new Date(seller.createdAt).toLocaleDateString()}</p>
+                    </div>
+                  </div>
+                ))}
+                {allUsers.filter(u => u.role === 'seller').length === 0 && (
+                  <p className="text-center py-10 opacity-50 text-xs">Belum ada penjual yang terdaftar</p>
+                )}
+              </div>
+            </ScrollArea>
           </CardContent>
         </Card>
         <Card className="lg:col-span-2">
